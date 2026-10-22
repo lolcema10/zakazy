@@ -75,13 +75,43 @@ function formatTime(iso) {
   }).format(date);
 }
 
+const API_ORIGIN = location.hostname.endsWith("github.io")
+  ? "https://lolcema10.pythonanywhere.com"
+  : "";
+const PUBLIC_LINK = "https://lolcema10.github.io/zakazy/";
+const TOKEN_KEY = "zakazy-session";
+
+function authToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+  } catch (error) {}
+}
+
+function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch (error) {}
+}
+
 async function api(path, { method = "GET", body } = {}) {
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  const token = authToken();
+  if (token) headers.Authorization = "Bearer " + token;
   let response;
   try {
-    response = await fetch(path, {
+    response = await fetch(API_ORIGIN + path, {
       method,
       credentials: "same-origin",
-      headers: body ? { "Content-Type": "application/json" } : {},
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -91,10 +121,12 @@ async function api(path, { method = "GET", body } = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) clearToken();
     const error = new Error(data.error || "Ошибка");
     error.status = response.status;
     throw error;
   }
+  if (data.token) saveToken(data.token);
   return data;
 }
 
@@ -462,6 +494,7 @@ async function logout() {
     showBanner(error.message);
     return;
   }
+  clearToken();
   state.me = null;
   state.orders = [];
   state.order = null;
@@ -511,8 +544,8 @@ function onHomeNetwork() {
 function shareTarget() {
   if (!onHomeNetwork()) {
     return {
-      url: location.origin,
-      note: "Эту ссылку можно отправить клиенту. Сайт по ней открыт и когда компьютер выключен.",
+      url: PUBLIC_LINK,
+      note: "Эту ссылку можно отправить клиенту. Она открывается и когда компьютер выключен.",
     };
   }
   if (state.meta.lanUrl) {

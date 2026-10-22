@@ -78,6 +78,8 @@ def wsgi_app(environ, start_response):
             handler.do_POST()
         elif method == "PATCH":
             handler.do_PATCH()
+        elif method == "OPTIONS":
+            handler.do_OPTIONS()
         else:
             handler.send_error(405)
     except Exception:

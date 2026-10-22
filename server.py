@@ -39,6 +39,8 @@ SESSION_TTL = 60 * 60 * 24 * 30
 STATUSES = ("new", "work", "done", "cancelled")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DB_LOCK = threading.Lock()
+# Страница на GitHub Pages ходит в этот сервер за заказами.
+PAGE_ORIGIN = "https://lolcema10.github.io"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -258,9 +260,20 @@ def new_session(conn, user_id):
     return token
 
 
+def request_token(handler):
+    header = handler.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        token = header[7:].strip()
+    else:
+        token = handler.read_cookie("session")
+    if not token or len(token) > 200 or any(ch.isspace() for ch in token):
+        return ""
+    return token
+
+
 def find_user(conn, handler):
-    token = handler.read_cookie("session")
-    if not token or len(token) > 200:
+    token = request_token(handler)
+    if not token:
         return None
     return conn.execute(
         """
@@ -313,7 +326,7 @@ def register(conn, body):
         (cur.lastrowid,),
     ).fetchone()
     token = new_session(conn, user["id"])
-    return 200, {"user": public_user(user)}, [session_cookie(token, SESSION_TTL)]
+    return 200, {"user": public_user(user), "token": token}, [session_cookie(token, SESSION_TTL)]
 
 
 def login(conn, body):
@@ -329,11 +342,11 @@ def login(conn, body):
     if user is None or not verify_password(password, stored):
         raise HttpError(400, "Неверная почта или пароль")
     token = new_session(conn, user["id"])
-    return 200, {"user": public_user(user)}, [session_cookie(token, SESSION_TTL)]
+    return 200, {"user": public_user(user), "token": token}, [session_cookie(token, SESSION_TTL)]
 
 
 def logout(conn, handler):
-    token = handler.read_cookie("session")
+    token = request_token(handler)
     if token:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
     return 200, {"ok": True}, [session_cookie("", 0)]
@@ -483,13 +496,33 @@ class Handler(BaseHTTPRequestHandler):
                 return part[len(prefix):]
         return ""
 
+    def allowed_origin(self):
+        origin = self.headers.get("Origin")
+        if not origin:
+            return ""
+        host = self.headers.get("Host", "")
+        if origin in (f"http://{host}", f"https://{host}", PAGE_ORIGIN):
+            return origin
+        return ""
+
     def check_origin(self):
         origin = self.headers.get("Origin")
         if not origin:
             return
-        host = self.headers.get("Host", "")
-        if origin not in (f"http://{host}", f"https://{host}"):
+        if not self.allowed_origin():
             raise HttpError(403, "Запрос отклонён")
+
+    def cors_headers(self):
+        origin = self.allowed_origin()
+        if not origin:
+            return []
+        return [
+            ("Access-Control-Allow-Origin", origin),
+            ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+            ("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS"),
+            ("Access-Control-Max-Age", "86400"),
+            ("Vary", "Origin"),
+        ]
 
     def read_body(self):
         try:
@@ -518,6 +551,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         for cookie in cookies or []:
             self.send_header("Set-Cookie", cookie)
+        for key, value in self.cors_headers():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -608,6 +643,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
+
+    def do_OPTIONS(self):
+        if not urlparse(self.path).path.startswith("/api") or not self.allowed_origin():
+            self.send_error(404)
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        for key, value in self.cors_headers():
+            self.send_header(key, value)
+        self.end_headers()
 
     def do_GET(self):
         if urlparse(self.path).path.startswith("/api"):

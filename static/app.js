@@ -337,7 +337,9 @@ function renderAuth() {
         ? "Этот аккаунт будет владельцем. Клиенты зарегистрируются отдельно."
         : (registering
           ? "После регистрации можно создать заказ и написать владельцу."
-          : "Заказы и переписка хранятся на компьютере, где запущен сайт."),
+          : (onHomeNetwork()
+            ? "Заказы и переписка хранятся на компьютере, где запущен сайт."
+            : "Заказы и переписка хранятся на этом сайте.")),
     }),
   ]);
   const card = el("div", { class: "auth-card" }, [
@@ -379,7 +381,12 @@ function renderAuth() {
           ]),
         ])
       ))),
-      el("p", { class: "side-note", text: "Переписка хранится на этом компьютере." }),
+      el("p", {
+        class: "side-note",
+        text: onHomeNetwork()
+          ? "Переписка хранится на этом компьютере."
+          : "Переписка хранится на этом сайте и остаётся, когда компьютер выключен.",
+      }),
     ]),
   ]);
   document.querySelector("#app").replaceChildren(el("div", { class: "auth" }, [side, el("main", { class: "auth-main" }, [card])]));
@@ -493,13 +500,16 @@ function renderList() {
   paintCards();
 }
 
-function shareTarget() {
+function onHomeNetwork() {
   const host = location.hostname;
-  const onHomeNetwork = host === "localhost" || host === "127.0.0.1" || host === "::1"
+  return host === "localhost" || host === "127.0.0.1" || host === "::1"
     || host.startsWith("192.168.")
     || host.startsWith("10.")
     || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
-  if (!onHomeNetwork) {
+}
+
+function shareTarget() {
+  if (!onHomeNetwork()) {
     return {
       url: location.origin,
       note: "Эту ссылку можно отправить клиенту. Сайт по ней открыт и когда компьютер выключен.",
